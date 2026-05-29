@@ -52,14 +52,16 @@ brand_config = {
 liab_factor = {"仅身故": 1.0, "身故+全残": 1.12}
 discount_rate = 0.035
 
-# 2025版CL4标准体生命表（30-59岁男性）
+# 2025版CL4标准体生命表（20-59岁男性）
 mortality_male_standard = [
-    0.00121, 0.00133, 0.00146, 0.00161, 0.00179,
-    0.00199, 0.00222, 0.00248, 0.00277, 0.00309,
-    0.00345, 0.00385, 0.00430, 0.00480, 0.00536,
-    0.00599, 0.00670, 0.00750, 0.00840, 0.00941,
-    0.01054, 0.01181, 0.01322, 0.01479, 0.01655,
-    0.01852, 0.02072, 0.02317, 0.02590, 0.02895
+    0.00062, 0.00065, 0.00068, 0.00072, 0.00077,  # 20-24
+    0.00083, 0.00090, 0.00098, 0.00108, 0.00119,  # 25-29
+    0.00121, 0.00133, 0.00146, 0.00161, 0.00179,  # 30-34
+    0.00199, 0.00222, 0.00248, 0.00277, 0.00309,  # 35-39
+    0.00345, 0.00385, 0.00430, 0.00480, 0.00536,  # 40-44
+    0.00599, 0.00670, 0.00750, 0.00840, 0.00941,  # 45-49
+    0.01054, 0.01181, 0.01322, 0.01479, 0.01655,  # 50-54
+    0.01852, 0.02072, 0.02317, 0.02590, 0.02895   # 55-59
 ]
 
 # ===================== 模型1：3状态马尔可夫链精算模型 =====================
@@ -70,7 +72,7 @@ class MarkovLifeInsurance:
         self.v = 1 / (1 + discount_rate)
 
     def get_mortality(self, start_age, policy_term):
-        start_idx = max(0, start_age - 30)
+        start_idx = max(0, start_age - 20)
         end_idx = start_idx + policy_term
         base_mort = mortality_male_standard[start_idx:min(end_idx, len(mortality_male_standard))]
         return [m * self.config["mortality_coef"] for m in base_mort]
@@ -79,7 +81,6 @@ class MarkovLifeInsurance:
         n = len(mortality)
         survival_prob = [1.0]
         total_termination_rate = [m * liab_factor[liability_type] for m in mortality]
-        
         for t in range(n):
             survival_prob.append(survival_prob[-1] * (1 - total_termination_rate[t]))
         return survival_prob, total_termination_rate
@@ -119,35 +120,31 @@ class TermLifeSimpleModel:
     def __init__(self, brand_name):
         self.brand = brand_name
         self.config = brand_config[brand_name]
-        
         self.params = {
-            "female": {
-                "a0": 2185.2,
-                "a1": -73.84,
-                "a2": -175.6,
-                "a3": 6.52
-            },
-            "male": {
-                "a0": 2421.7,
-                "a1": -82.63,
-                "a2": -227.4,
-                "a3": 8.91
-            }
+            "female": {"a0":2185.2,
+                       "a1":-73.84,
+                       "a2":-175.6,
+                       "a3":6.52},
+            "male":{"a0":2421.7,
+                    "a1":-82.63,
+                    "a2":-227.4,
+                    "a3":8.91}
         }
         self.expense_rate = 0.12
         self.profit_split = 0.4
         self.adjust_factor = {
-            "standard": 1.0,
-            "smoker": 1.75,
-            "sub_health": 1.35,
-            "high_risk_job": 1.65,
-            "extra_disease": 1.07,
-            "extra_accident": 1.15
+            "standard":1.0,"smoker":1.75,"sub_health":1.35,"high_risk_job":1.65
         }
 
     def calc_gross_premium(self, age, gender, term, insured_amount, adjust_type="standard"):
         p = self.params[gender]
-        base = p["a0"] + p["a1"] * age + p["a2"] * term + p["a3"] * age * term
+        if age < 30:
+            base_30 = p["a0"] + p["a1"]*30 + p["a2"]*term + p["a3"]*30*term
+            age_factor = 0.6 + (age-20)*0.04 
+            base = base_30 * age_factor
+        else:
+            base = p["a0"] + p["a1"]*age + p["a2"]*term + p["a3"]*age*term
+        
         gross = base * (insured_amount / 100)
         gross = gross * self.adjust_factor[adjust_type]
         gross = gross * self.config["simple_calibration"]
@@ -156,20 +153,20 @@ class TermLifeSimpleModel:
     def calc_premium_load(self, gross_p):
         pure_p = gross_p / (1 + self.expense_rate)
         load = gross_p - pure_p
-        load_rate = (load / pure_p) * 100
-        return round(pure_p, 2), round(load, 2), round(load_rate, 2)
+        load_rate = (load / pure_p)*100
+        return round(pure_p,2),round(load,2),round(load_rate,2)
 
     def calc_insurer_benefit(self, gross_p, load, term):
         total_gross = gross_p * term
         total_load = load * term
         total_profit = total_load * self.profit_split
-        profit_rate = (total_profit / total_gross) * 100
-        return round(total_profit, 2), round(profit_rate, 2)
+        profit_rate = (total_profit / total_gross)*100
+        return round(total_profit,2),round(profit_rate,2)
 
     def calc_consumer_simple(self, gross_p, risk_aversion):
         reserve_p = gross_p * (1 + risk_aversion * 0.1)
         surplus = reserve_p - gross_p
-        return round(reserve_p, 2), round(surplus, 2)
+        return round(reserve_p,2),round(surplus,2)
 
 # ---------------------- 工具函数 ----------------------
 def gender_convert(gender):
@@ -198,7 +195,7 @@ def main():
         
         insure_amount = st.slider("保额（万元）", 10, 500, 100, 10)
         gender = st.radio("性别", ["男", "女"], horizontal=True)
-        age = st.slider("投保年龄", 20, 55, 30)
+        age = st.slider("投保年龄", 20, 59, 30)
         
         pay_term = st.selectbox("缴费年限", ["10年", "15年", "20年", "30年"], index=3)
         protect_term = st.selectbox("保障期间", ["保至60岁", "保至70岁", "定期20年", "保终身"], index=0)
